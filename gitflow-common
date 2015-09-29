@@ -81,7 +81,7 @@ git_do() {
 git_local_branches() { git branch --no-color | sed 's/^[* ] //'; }
 git_remote_branches() { git branch -r --no-color | sed 's/^[* ] //'; }
 git_all_branches() { ( git branch --no-color; git branch -r --no-color) | sed 's/^[* ] //'; }
-git_all_tags() { git tag; }
+
 
 git_current_branch() {
 	git branch --no-color | grep '^\* ' | grep -v 'no branch' | sed 's/^* //g'
@@ -113,9 +113,6 @@ git_branch_exists() {
 	has $1 $(git_all_branches)
 }
 
-git_tag_exists() {
-	has $1 $(git_all_tags)
-}
 
 #
 # git_compare_branches()
@@ -170,24 +167,15 @@ gitflow_has_master_configured() {
 	[ "$master" != "" ] && git_local_branch_exists "$master"
 }
 
-gitflow_has_develop_configured() {
-	local develop=$(git config --get gitflow.branch.develop)
-	[ "$develop" != "" ] && git_local_branch_exists "$develop"
-}
 
 gitflow_has_prefixes_configured() {
 	git config --get gitflow.prefix.feature >/dev/null 2>&1     && \
 	git config --get gitflow.prefix.release >/dev/null 2>&1     && \
-	git config --get gitflow.prefix.hotfix >/dev/null 2>&1      && \
-	git config --get gitflow.prefix.support >/dev/null 2>&1     && \
-	git config --get gitflow.prefix.versiontag >/dev/null 2>&1
+	git config --get gitflow.prefix.hotfix >/dev/null 2>&1
 }
 
 gitflow_is_initialized() {
 	gitflow_has_master_configured                    && \
-	gitflow_has_develop_configured                   && \
-	[ "$(git config --get gitflow.branch.master)" !=    \
-	  "$(git config --get gitflow.branch.develop)" ] && \
 	gitflow_has_prefixes_configured
 }
 
@@ -195,7 +183,6 @@ gitflow_is_initialized() {
 gitflow_load_settings() {
 	export DOT_GIT_DIR=$(git rev-parse --git-dir 2>/dev/null)
 	export MASTER_BRANCH=$(git config --get gitflow.branch.master)
-	export DEVELOP_BRANCH=$(git config --get gitflow.branch.develop)
 	export ORIGIN=$(git config --get gitflow.origin || echo origin)
 }
 
@@ -299,13 +286,6 @@ require_branch_absent() {
 	fi
 }
 
-require_tag_absent() {
-	for tag in $(git_all_tags); do
-		if [ "$1" = "$tag" ]; then
-			die "Tag '$1' already exists. Pick another name."
-		fi
-	done
-}
 
 require_branches_equal() {
 	require_local_branch "$1"

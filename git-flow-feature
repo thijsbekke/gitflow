@@ -46,7 +46,6 @@ init() {
 usage() {
 	echo "usage: git flow feature [list] [-v]"
 	echo "       git flow feature start [-F] <name> [<base>]"
-	echo "       git flow feature finish [-rFkDS] [<name|nameprefix>]"
 	echo "       git flow feature publish <name>"
 	echo "       git flow feature track <name>"
 	echo "       git flow feature diff [<name|nameprefix>]"
@@ -91,28 +90,16 @@ cmd_list() {
 	local branch
 	for branch in $short_names; do
 		local fullname=$PREFIX$branch
-		local base=$(git merge-base "$fullname" "$DEVELOP_BRANCH")
-		local develop_sha=$(git rev-parse "$DEVELOP_BRANCH")
+		local base=$(git merge-base "$fullname" "$MASTER_BRANCH")
 		local branch_sha=$(git rev-parse "$fullname")
 		if [ "$fullname" = "$current_branch" ]; then
 			printf "* "
 		else
 			printf "  "
 		fi
-		if flag verbose; then
-			printf "%-${width}s" "$branch"
-			if [ "$branch_sha" = "$develop_sha" ]; then
-				printf "(no commits yet)"
-			elif [ "$base" = "$branch_sha" ]; then
-				printf "(is behind develop, may ff)"
-			elif [ "$base" = "$develop_sha" ]; then
-				printf "(based on latest develop)"
-			else
-				printf "(may be rebased)"
-			fi
-		else
-			printf "%s" "$branch"
-		fi
+
+        printf "%s" "$branch"
+
 		echo
 	done
 }
@@ -196,7 +183,7 @@ parse_remote_name() {
 cmd_start() {
 	DEFINE_boolean fetch false 'fetch from origin before performing local operation' F
 	parse_args "$@"
-	BASE=${2:-$DEVELOP_BRANCH}
+	BASE=${2:-$MASTER_BRANCH}
 	require_name_arg
 
 	# sanity checks
@@ -204,13 +191,13 @@ cmd_start() {
 
 	# update the local repo with remote changes, if asked
 	if flag fetch; then
-		git_do fetch -q "$ORIGIN" "$DEVELOP_BRANCH"
+		git_do fetch -q "$ORIGIN" "$MASTER_BRANCH"
 	fi
 
 	# if the origin branch counterpart exists, assert that the local branch
 	# isn't behind it (to avoid unnecessary rebasing)
-	if git_branch_exists "$ORIGIN/$DEVELOP_BRANCH"; then
-		require_branches_equal "$DEVELOP_BRANCH" "$ORIGIN/$DEVELOP_BRANCH"
+	if git_branch_exists "$ORIGIN/$MASTER_BRANCH"; then
+		require_branches_equal "$MASTER_BRANCH" "$ORIGIN/$MASTER_BRANCH"
 	fi
 
 	# create branch
@@ -218,161 +205,24 @@ cmd_start() {
 		die "Could not create feature branch '$BRANCH'"
 	fi
 
+    # create remote branch
+    git_do push "$ORIGIN" "$BRANCH:refs/heads/$BRANCH"
+    git_do fetch -q "$ORIGIN"
+
+    # configure remote tracking
+    git_do config "branch.$BRANCH.remote" "$ORIGIN"
+    git_do config "branch.$BRANCH.merge" "refs/heads/$BRANCH"
+    git_do checkout "$BRANCH"
+
 	echo
 	echo "Summary of actions:"
 	echo "- A new branch '$BRANCH' was created, based on '$BASE'"
+	echo "- A new remote branch '$BRANCH' was created"
+    echo "- The local branch '$BRANCH' was configured to track the remote branch"
 	echo "- You are now on branch '$BRANCH'"
 	echo ""
-	echo "Now, start committing on your feature. When done, use:"
-	echo ""
-	echo "     git flow feature finish $NAME"
-	echo
-}
-
-cmd_finish() {
-	DEFINE_boolean fetch false "fetch from $ORIGIN before performing finish" F
-	DEFINE_boolean rebase false "rebase instead of merge" r
-	DEFINE_boolean keep false "keep branch after performing finish" k
-	DEFINE_boolean force_delete false "force delete feature branch after finish" D
-	DEFINE_boolean squash false "squash feature during merge" S
-	parse_args "$@"
-	expand_nameprefix_arg_or_current
-
-	# sanity checks
-	require_branch "$BRANCH"
-
-	# detect if we're restoring from a merge conflict
-	if [ -f "$DOT_GIT_DIR/.gitflow/MERGE_BASE" ]; then
-		#
-		# TODO: detect that we're working on the correct branch here!
-		# The user need not necessarily have given the same $NAME twice here
-		# (although he/she should).
-		# 
-
-		# TODO: git_is_clean_working_tree() should provide an alternative
-		# exit code for "unmerged changes in working tree", which we should
-		# actually be testing for here
-		if git_is_clean_working_tree; then
-			FINISH_BASE=$(cat "$DOT_GIT_DIR/.gitflow/MERGE_BASE")
-
-			# Since the working tree is now clean, either the user did a
-			# succesfull merge manually, or the merge was cancelled.
-			# We detect this using git_is_branch_merged_into()
-			if git_is_branch_merged_into "$BRANCH" "$FINISH_BASE"; then
-				rm -f "$DOT_GIT_DIR/.gitflow/MERGE_BASE"
-				helper_finish_cleanup
-				exit 0
-			else
-				# If the user cancelled the merge and decided to wait until later,
-				# that's fine. But we have to acknowledge this by removing the
-				# MERGE_BASE file and continuing normal execution of the finish
-				rm -f "$DOT_GIT_DIR/.gitflow/MERGE_BASE"
-			fi
-		else
-			echo
-			echo "Merge conflicts not resolved yet, use:"
-			echo "    git mergetool"
-			echo "    git commit"
-			echo 
-			echo "You can then complete the finish by running it again:"
-			echo "    git flow feature finish $NAME"
-			echo
-			exit 1
-		fi
-	fi
-
-	# sanity checks
-	require_clean_working_tree
-
-	# update local repo with remote changes first, if asked
-	if has "$ORIGIN/$BRANCH" $(git_remote_branches); then
-		if flag fetch; then
-			git_do fetch -q "$ORIGIN" "$BRANCH"
-			git_do fetch -q "$ORIGIN" "$DEVELOP_BRANCH"
-		fi
-	fi
-
-	if has "$ORIGIN/$BRANCH" $(git_remote_branches); then
-		require_branches_equal "$BRANCH" "$ORIGIN/$BRANCH"
-	fi
-	if has "$ORIGIN/$DEVELOP_BRANCH" $(git_remote_branches); then
-		require_branches_equal "$DEVELOP_BRANCH" "$ORIGIN/$DEVELOP_BRANCH"
-	fi
-
-	# if the user wants to rebase, do that first
-	if flag rebase; then
-		if ! git flow feature rebase "$NAME" "$DEVELOP_BRANCH"; then
-			warn "Finish was aborted due to conflicts during rebase."
-			warn "Please finish the rebase manually now."
-			warn "When finished, re-run:"
-			warn "    git flow feature finish '$NAME' '$DEVELOP_BRANCH'"
-			exit 1
-		fi
-	fi
-
-	# merge into BASE
-	git_do checkout "$DEVELOP_BRANCH"
-	if [ "$(git rev-list -n2 "$DEVELOP_BRANCH..$BRANCH" | wc -l)" -eq 1 ]; then
-		git_do merge --ff "$BRANCH"
-	else
-		if noflag squash; then
-		    git_do merge --no-ff "$BRANCH"
-		else
-			git_do merge --squash "$BRANCH"
-			git_do commit
-			git_do merge "$BRANCH"
-		fi
-	fi
-
-	if [ $? -ne 0 ]; then
-		# oops.. we have a merge conflict!
-		# write the given $DEVELOP_BRANCH to a temporary file (we need it later)
-		mkdir -p "$DOT_GIT_DIR/.gitflow"
-		echo "$DEVELOP_BRANCH" > "$DOT_GIT_DIR/.gitflow/MERGE_BASE"
-		echo
-		echo "There were merge conflicts. To resolve the merge conflict manually, use:"
-		echo "    git mergetool"
-		echo "    git commit"
-		echo 
-		echo "You can then complete the finish by running it again:"
-		echo "    git flow feature finish $NAME"
-		echo
-		exit 1
-	fi
-
-	# when no merge conflict is detected, just clean up the feature branch
-	helper_finish_cleanup
-}
-
-helper_finish_cleanup() {
-	# sanity checks
-	require_branch "$BRANCH"
-	require_clean_working_tree
-
-	# delete branch
-	if flag fetch; then
-		git_do push "$ORIGIN" ":refs/heads/$BRANCH"
-	fi
-	
-	
-	if noflag keep; then
-		if flag force_delete; then
-			git_do branch -D "$BRANCH"
-		else
-			git_do branch -d "$BRANCH"
-		fi
-	fi
-
-	echo
-	echo "Summary of actions:"
-	echo "- The feature branch '$BRANCH' was merged into '$DEVELOP_BRANCH'"
-	#echo "- Merge conflicts were resolved"		# TODO: Add this line when it's supported
-	if flag keep; then
-		echo "- Feature branch '$BRANCH' is still available"
-	else
-		echo "- Feature branch '$BRANCH' has been removed"
-	fi
-	echo "- You are now on branch '$DEVELOP_BRANCH'"
+	echo "- Now, start committing on your feature. When done, use:"
+	echo "- Create a merge request in GitLab to merge it to the $MASTER_BRANCH"
 	echo
 }
 
@@ -428,14 +278,14 @@ cmd_diff() {
 
 	if [ "$NAME" != "" ]; then
 		expand_nameprefix_arg
-		BASE=$(git merge-base "$DEVELOP_BRANCH" "$BRANCH")
+		BASE=$(git merge-base "$MASTER_BRANCH" "$BRANCH")
 		git diff "$BASE..$BRANCH"
 	else
 		if ! git_current_branch | grep -q "^$PREFIX"; then
 			die "Not on a feature branch. Name one explicitly."
 		fi
 
-		BASE=$(git merge-base "$DEVELOP_BRANCH" HEAD)
+		BASE=$(git merge-base "$MASTER_BRANCH" HEAD)
 		git diff "$BASE"
 	fi
 }
@@ -469,7 +319,7 @@ cmd_rebase() {
 	if flag interactive; then
 		OPTS="$OPTS -i"
 	fi
-	git_do rebase $OPTS "$DEVELOP_BRANCH"
+	git_do rebase $OPTS "$MASTER_BRANCH"
 }
 
 avoid_accidental_cross_branch_action() {
