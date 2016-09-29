@@ -21,3 +21,11 @@ invited to contribute back your modifications to the community, preferably
 in a Github fork, of course.
 
 
+Install
+-------------
+
+An easy way install git-flow is using the original git-flow installer, which can perform system-wide installation like so:
+
+$ curl -Ol https://raw.githubusercontent.com/thijsbekke/gitflow/develop/contrib/gitflow-installer.sh
+$ chmod +x gitflow-installer.sh
+$ sudo ./gitflow-installer.sh\
